@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 
+"""Match data of the Papyrus dataset with that of the Protein Data Bank."""
+
 import os
 import time
 from typing import Iterator, Generator, Optional, Union
@@ -18,7 +20,7 @@ from .utils import UniprotMatch
 def update_rcsb_data(root_folder: Optional[str] = None,
                      overwrite: bool = False,
                      verbose: bool = True
-                    ) -> pd.DataFrame:
+                     ) -> pd.DataFrame:
     """Update the local data of the RCSB.
 
     :param root_folder: Directory where Papyrus bioactivity data is stored (default: pystow's home folder)
@@ -36,7 +38,7 @@ def update_rcsb_data(root_folder: Optional[str] = None,
     if (os.path.isfile(output_path) and (time.time() - os.path.getmtime(output_path)) < 86400) and not overwrite:
         if verbose:
             print(f'RCSB data was obtained less than 24 hours ago: {output_path}\n'
-                  f'Set overwrite=True to force fetching again.')
+                  f'Set overwrite=True to force the fetching of data again.')
         return pd.read_csv(output_path, sep='\t')
     # Obtain the mapping InChI to PDB ligand code
     if verbose:
@@ -77,7 +79,9 @@ def update_rcsb_data(root_folder: Optional[str] = None,
     # Map PDBID prot to UniProt acessions
     if verbose:
         print(f'Obtaining mappings from protein PDB ID to UniProt accessions')
-    uniprot_mapping = UniprotMatch.uniprot_mappings(pdb_data.PDBIDprot.tolist(), map_from='PDB', map_to='UniProtKB_AC-ID')
+    uniprot_mapping = UniprotMatch.uniprot_mappings(pdb_data.PDBIDprot.tolist(),
+                                                    map_from='PDB',
+                                                    map_to='UniProtKB_AC-ID')  # Forces the use of SIFTS
     # Join on the RCSB data
     if verbose:
         print(f'Combining the data')
