@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 
+"""Filtering capacities of the Papyrus-scripts."""
+
 import os
 from itertools import chain
 from typing import Any, List, Optional, Union, Iterator, Iterable
@@ -10,7 +12,7 @@ import swifter
 from joblib import Parallel, delayed
 from pandas.io.parsers import TextFileReader as PandasTextFileReader
 from sklearn.utils import shuffle
-from scipy.stats import median_absolute_deviation as MAD
+from scipy.stats import median_abs_deviation as MAD
 from tqdm.auto import tqdm
 
 from .fingerprint import Fingerprint, MorganFingerprint
@@ -20,7 +22,8 @@ from .subsim_search import FPSubSim2
 def equalize_cell_size_in_row(row, cols=None, fill_mode='internal', fill_value: object = ''):
     """Equalize the number of values in each list-containing cell of a pandas dataframe.
     
-    Slightly adapted from user nphaibk (https://stackoverflow.com/questions/45846765/efficient-way-to-unnest-explode-multiple-list-columns-in-a-pandas-dataframe)
+Slightly adapted from user nphaibk:
+https://stackoverflow.com/questions/45846765/efficient-way-to-unnest-explode-multiple-list-columns-in-a-pandas-dataframe
     
     :param row: pandas row the function should be applied to
     :param cols: columns for which equalization must be performed
@@ -32,11 +35,15 @@ def equalize_cell_size_in_row(row, cols=None, fill_mode='internal', fill_value: 
     """
     if not cols:
         cols = row.index
+    # Obtain indices of columns of interest
     jcols = [j for j, v in enumerate(row.index) if v in cols]
     if len(jcols) < 1:
         jcols = range(len(row.index))
+    # Obtain lengths of each values
     Ls = [len(x) for x in row.values]
+    # Ensure not all values are the same
     if not Ls[:-1] == Ls[1:]:
+        # Ensure values are lists
         vals = [v if isinstance(v, list) else [v] for v in row.values]
         if fill_mode == 'external':
             vals = [[e] + [fill_value] * (max(Ls) - 1) if (not j in jcols) and (isinstance(row.values[j], list))
@@ -54,8 +61,8 @@ def equalize_cell_size_in_row(row, cols=None, fill_mode='internal', fill_value: 
     return row
 
 
-def keep_quality(data: Union[pd.DataFrame, PandasTextFileReader, Iterator], min_quality: str = 'high') -> Union[
-    pd.DataFrame, Iterator]:
+def keep_quality(data: Union[pd.DataFrame, PandasTextFileReader, Iterator],
+                 min_quality: str = 'high') -> Union[pd.DataFrame, Iterator]:
     """Keep only the data with the minimum defined quality
     
     :param data: the dataframe, chunked or not into a pandas TextFileReader, containing data to be filtered
@@ -83,7 +90,7 @@ def _chunked_keep_quality(chunks: Union[PandasTextFileReader, Iterator], min_qua
         yield filtered_chunk
 
 
-def process_group(group):
+def process_group(group, additional_columns: Optional[List[str]] = None):
     """Aggregate data from one group accordingly"""
     if (group.values[0] == group.values).all():  # If all values are equal, return first record
         group['pchembl_value_Mean'] = group['pchembl_value']
@@ -93,13 +100,20 @@ def process_group(group):
         group['pchembl_value_Median'] = group['pchembl_value']
         group['pchembl_value_MAD'] = np.NaN
         return group.iloc[:1, :]
+    # Lambda: Return one value if all are the same
     listvals = lambda x: ';'.join(set(str(y) for y in x)) if (x.values[0] == x.values).all() else ';'.join(
         str(y) for y in x)
+    # Lambda: Return all values everytime
     listallvals = lambda x: ';'.join(str(y) for y in x)
+    # Aggregation rules
     mappings = {'source': 'first', 'CID': listvals, 'AID': listvals,
-                'type_IC50': listallvals, 'type_EC50': listallvals, 'type_KD': listallvals,
-                'type_Ki': listallvals, 'type_other': listallvals, 'relation': listvals,
+                'type_IC50': listvals, 'type_EC50': listvals, 'type_KD': listvals,
+                'type_Ki': listvals, 'type_other': listvals, 'relation': listvals,
                 'pchembl_value': listallvals}
+    # Consider other columns
+    if additional_columns is not None:
+        for column in additional_columns:
+            mappings[column] = listvals
     return pd.concat([group.groupby('Activity_ID').aggregate(mappings).reset_index(),
                       group.groupby('Activity_ID')['pchembl_value'].aggregate(pchembl_value_Mean='mean',
                                                                               pchembl_value_StdDev='std',
@@ -110,13 +124,13 @@ def process_group(group):
                                                                               ).reset_index(drop=True)], axis=1)
 
 
-def process_groups(groups):
+def process_groups(groups, additional_columns: Optional[List[str]] = None):
     """Aggregate data from multiple groups"""
-    return pd.concat([process_group(group) for group in groups])
+    return pd.concat([process_group(group, additional_columns) for group in groups])
 
 
-def keep_source(data: Union[pd.DataFrame, PandasTextFileReader, Iterator], source: Union[List[str], str] = 'all', njobs: int = 1,
-                verbose: bool = False) -> pd.DataFrame:
+def keep_source(data: Union[pd.DataFrame, PandasTextFileReader, Iterator], source: Union[List[str], str] = 'all',
+                njobs: int = 1, verbose: bool = False) -> pd.DataFrame:
     """Keep only the data from the defined source(s).
     
     :param data: the dataframe containing data to be filtered
@@ -151,6 +165,11 @@ def keep_source(data: Union[pd.DataFrame, PandasTextFileReader, Iterator], sourc
         # Columns with optional multiple values
         cols2split = ['source', 'CID', 'AID', 'type_IC50', 'type_EC50', 'type_KD', 'type_Ki', 'type_other', 'relation',
                       'pchembl_value']
+        # Allow processing of Papyrus++
+        papyruspp = 'Activity_class' not in data.columns
+        if papyruspp:
+            data['Activity_class'] = np.NaN
+            data['type_other'] = np.NaN
         # Keep trace of order of columns
         ordered_columns = data.columns.tolist()
         # Keep binary data associated to source
@@ -216,10 +235,13 @@ def keep_source(data: Union[pd.DataFrame, PandasTextFileReader, Iterator], sourc
         # Add back binary data (might be empty)
         data = pd.concat([preserved, data, preserved_binary, binary_data])
         del preserved, preserved_binary, binary_data
+        if papyruspp:
+            data.drop(columns=['Activity_class', 'type_other'], inplace=True)
         return data
 
 
-def _chunked_keep_source(data: Union[PandasTextFileReader, Iterator], source: Union[List[str], str], njobs) -> pd.DataFrame:
+def _chunked_keep_source(data: Union[PandasTextFileReader, Iterator], source: Union[List[str], str],
+                         njobs: int) -> pd.DataFrame:
     for chunk in data:
         yield keep_source(chunk, source, njobs)
 
@@ -243,8 +265,8 @@ def is_multiple_types(row, activity_types: List[str]):
     return np.any([';' in str(row[activity_type]) for activity_type in activity_types])
 
 
-def keep_type(data: Union[pd.DataFrame, PandasTextFileReader, Iterator], activity_types: Union[List[str], str] = 'ic50', njobs: int = 1,
-              verbose: bool = False):
+def keep_type(data: Union[pd.DataFrame, PandasTextFileReader, Iterator], activity_types: Union[List[str], str] = 'ic50',
+              njobs: int = 1, verbose: bool = False):
     """Keep only the data matching desired activity types
     
     :param data: the dataframe containing data to be filtered
@@ -272,6 +294,11 @@ def keep_type(data: Union[pd.DataFrame, PandasTextFileReader, Iterator], activit
     elif activity_types.difference(types_):
         raise ValueError(f'Type not supported, must be one of {types}')
     else:
+        # Allow processing of Papyrus++
+        papyruspp = 'Activity_class' not in data.columns
+        if papyruspp:
+            data['Activity_class'] = np.NaN
+            data['type_other'] = np.NaN
         # Transform activity_types to column names
         activity_types = [f"type_{types[i]}" for i in range(len(types)) if types_[i] in activity_types]
         # Columns with optional multiple values
@@ -344,6 +371,8 @@ def keep_type(data: Union[pd.DataFrame, PandasTextFileReader, Iterator], activit
         # Add back binary data (might be empty)
         data = pd.concat([preserved, data, preserved_binary, binary_data])
         del preserved, preserved_binary, binary_data
+        if papyruspp:
+            data.drop(columns=['Activity_class', 'type_other'], inplace=True)
         return data
 
 
@@ -379,7 +408,8 @@ def _chunked_keep_accession(data: Union[PandasTextFileReader, Iterator], accessi
 def equalize_cell_size_in_column(col, fill_mode='internal', fill_value: object = ''):
     """Equalize the number of values in each list-containing cell of a pandas dataframe.
 
-    Adapted from user nphaibk (https://stackoverflow.com/questions/45846765/efficient-way-to-unnest-explode-multiple-list-columns-in-a-pandas-dataframe)
+    Adapted from user nphaibk
+https://stackoverflow.com/questions/45846765/efficient-way-to-unnest-explode-multiple-list-columns-in-a-pandas-dataframe
 
     :param col: pandas Series the function should be applied to
     :param fill_mode: 'internal' to repeat the only/last value of a cell as much as needed
@@ -411,13 +441,13 @@ def keep_protein_class(data: Union[pd.DataFrame, PandasTextFileReader, Iterator]
     :param data: the dataframe containing data to be filtered
     :param protein_data: the dataframe of Papyrus protein targets
     :param classes: protein classes to keep (case insensitive).
-                    - {'l2': 'Kinase'} matches all proteins with classification 'Enzyme->Kinase'
-                    - {'l5': 'Adenosine receptor'} matches 'Membrane receptor->Family A G protein-coupled receptor->Small molecule receptor (family A GPCR)->Nucleotide-like receptor (family A GPCR)-> Adenosine receptor'
-                    - All levels in the same dict are enforced, e.g. {'l1': ''Epigenetic regulator', 'l3': 'HDAC class IIb'} does not match records without the specified l1 AND l3
-                    - If given a list of dicts, results in a union of the dicts, e.g. [{'l2': 'Kinase'}, {'l1': 'Membrane receptor'}] matches records with classification either 'Enzyme->Kinase' or 'Membrane receptor'
-                    - Level-independent patterns can be specified with the 'l?' key, e.g. {'l?': 'SLC'} matches any classification level containing the 'SLC' keyword
-                      Only one 'l?' per dict is supported.
-                      Mixed usage of 'l?' and level-specific patterns (e.f. 'l1') is not supported
+    - {'l2': 'Kinase'} matches all proteins with classification 'Enzyme->Kinase'
+    - {'l5': 'Adenosine receptor'} matches 'Membrane receptor->Family A G protein-coupled receptor->Small molecule receptor (family A GPCR)->Nucleotide-like receptor (family A GPCR)-> Adenosine receptor'
+    - All levels in the same dict are enforced, e.g. {'l1': ''Epigenetic regulator', 'l3': 'HDAC class IIb'} does not match records without the specified l1 AND l3
+    - If given a list of dicts, results in a union of the dicts, e.g. [{'l2': 'Kinase'}, {'l1': 'Membrane receptor'}] matches records with classification either 'Enzyme->Kinase' or 'Membrane receptor'
+    - Level-independent patterns can be specified with the 'l?' key, e.g. {'l?': 'SLC'} matches any classification level containing the 'SLC' keyword
+    Only one 'l?' per dict is supported.
+    Mixed usage of 'l?' and level-specific patterns (e.f. 'l1') is not supported
     :param generic_regex: whether to consider generic patterns 'l?' as regex, allowing for partial match.
 
     :return: the data with desired protein classes
@@ -561,7 +591,7 @@ def _consume_deeper_chunks(generator: Union[PandasTextFileReader, Iterator]):
 
 
 def keep_organism(data: Union[pd.DataFrame, PandasTextFileReader, Iterator], protein_data: pd.DataFrame,
-                  organism: Optional[Union[str, List[str]]] = 'Human',
+                  organism: Optional[Union[str, List[str]]] = 'Homo sapiens (Human)',
                   generic_regex: bool = False):
     """Keep only the data matching desired protein classifications.
 
@@ -606,7 +636,7 @@ def _chunked_keep_organism(data: Union[PandasTextFileReader, Iterator], protein_
 
 
 def keep_match(data: Union[pd.DataFrame, PandasTextFileReader, Iterator], column: str, values: Union[Any, List[Any]]):
-    """Keep only the data matching desired columns with desired values.
+    """Keep only the data matching desired columns with desired values (equivalent to *isin*).
 
     :param data: the dataframe containing data to be filtered
     :param column: column to be filtered
@@ -660,7 +690,7 @@ def keep_similar(data: Union[pd.DataFrame, PandasTextFileReader, Iterator], mole
 
     :param data: the dataframe containing data to be filtered
     :param molecule_smiles: the query molecule(s)
-    :param fpsubsim_file: path to FPSubSim2 database
+    :param fpsubsim2_file: path to FPSubSim2 database
     :param fingerprint: fingerprint to be used for similarity search
     :param threshold: similarity threshold
     :param cuda: whether to use GPU for similarity searches
@@ -693,7 +723,7 @@ def _chunked_keep_similar(data: Union[PandasTextFileReader, Iterator], molecule_
     fpss2.load(fpsubsim2_file)
     if isinstance(molecule_smiles, str):
         molecule_smiles = [molecule_smiles]
-    similarity_engine = fpss2.get_similarity_lib(cuda=cuda)
+    similarity_engine = fpss2.get_similarity_lib(cuda=cuda, fp_signature=fingerprint._hash)
     similar_mols = pd.concat(
         [similarity_engine.similarity(smiles, threshold=threshold) for smiles in tqdm(molecule_smiles)], axis=0)
     similar_mols = similar_mols.iloc[:, -2:]
