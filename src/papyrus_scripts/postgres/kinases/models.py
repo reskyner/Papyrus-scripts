@@ -1,10 +1,12 @@
+# NB: duplication from postgres diectory, but can be used if database is set up from Zenodo datadump to reproduce kinase work if don't want to have whole repo
+
+
 from ast import For
-# from xmlrpc.client import Boolean
 from sqlalchemy import Column, Integer, Text, Float, ForeignKey, Boolean, Table
 from sqlalchemy.orm import relationship
 from razi.rdkit_postgresql.types import Mol, Bfp
 
-from .session import Base
+from session import Base
 
 
 # association table between protein and classification (Many to Many relationship)
@@ -77,14 +79,14 @@ class Activity(Base):
     # all_years = Column(Text)
     type = Column(Integer, ForeignKey('activity_type.id'))
     # activity_class?
-    relation = Column(Text)
-    pchembl_value = Column(Float)
-    pchembl_value_mean = Column(Float)
-    pchembl_value_stdev = Column(Float)
-    pchembl_value_SEM = Column(Float)
-    pchembl_value_n = Column(Float)
-    pchembl_value_median = Column(Float)
-    pchembl_value_mad = Column(Float)
+    relation = Column(Text, nullable=True)
+    pchembl_value = Column(Float, nullable=True)
+    pchembl_value_mean = Column(Float, nullable=True)
+    pchembl_value_stdev = Column(Float, nullable=True)
+    pchembl_value_SEM = Column(Float, nullable=True)
+    pchembl_value_n = Column(Float, nullable=True)
+    pchembl_value_median = Column(Float, nullable=True)
+    pchembl_value_mad = Column(Float, nullable=True)
 
 
 class ActivityType(Base):
